@@ -39,9 +39,10 @@
 |---|---|
 | `sbt compile` выполняется без ошибок | ✅ |
 | `sbt test` проходит (3 теста) | ✅ |
-| `docker compose up -d` поднимает PostgreSQL и Kafka | ⏳ (не проверено локально) |
+| `docker compose up -d` поднимает PostgreSQL и Kafka | ⏳ (не проверено локально, path исправлен) |
 | Приложение запускается | ⏳ (требуется запуск) |
 | CI проходит на каждый PR | ⏳ (проверится после merge) |
+| Code Review пройден | ✅ (7 находок, все исправлены) |
 
 ---
 
@@ -84,7 +85,7 @@ tpp/
 ├── docker/
 │   ├── docker-compose.yml             # PostgreSQL + Kafka + Zookeeper
 │   └── postgres/
-│       └── init.sql                   # Инициализация БД
+│       └── init.sql                   # Инициализация БД (единственный источник схемы)
 └── .github/
     └── workflows/
         └── ci.yml                     # CI/CD pipeline
@@ -102,6 +103,14 @@ tpp/
 6. `test: добавить базовые тесты ScalaTest`
 7. `ci: добавить Docker Compose validation в CI`
 8. `chore(git): добавить .qwen/ в .gitignore`
+9. `fix(code-review): исправить все 7 замечаний code review`
+   - volume mount path в docker-compose
+   - удалить дубликат схемы V1__initial_schema.sql
+   - Kafka dual-listener
+   - env var override для пароля БД
+   - ZIO Test framework
+   - graceful shutdown TODO
+   - убрать deprecated version из docker-compose
 
 ---
 
