@@ -3,12 +3,12 @@ package tpp.domain
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.prop.TableDrivenPropertyChecks._
-import tpp.domain.error.{AccountNotActive, DomainError, InsufficientFunds, SameSourceAndDestination, ValidationError}
+import tpp.domain.error.{AccountNotActive, DomainError, InsufficientFunds, SameSourceAndDestination, TransactionNotCancellable, ValidationError}
 import tpp.domain.event.{AccountBalanceUpdated, DomainEvent, TransactionCancelled, TransactionCompleted, TransactionCreated}
 import tpp.domain.model.AccountStatus.{Active, Closed, Frozen}
 import tpp.domain.model.TransactionStatus.{Cancelled, Completed, Failed, Pending}
 import tpp.domain.model.{Account, AccountId, Amount, Currency, Transaction, TransactionId}
-import tpp.domain.service.{DomainResult, TransactionProcessor}
+import tpp.domain.service.{CancelResult, DomainResult, TransactionProcessor}
 
 import java.time.Instant
 import java.util.UUID
@@ -158,13 +158,13 @@ class AccountSpec extends AnyFlatSpec with Matchers:
     val acc    = Account.create(id, Amount.unsafe(BigDecimal("100.00")), usd)
     val result = acc.debit(Amount.unsafe(BigDecimal("200.00")))
     result.isLeft shouldBe true
-    result.left.get.isInstanceOf[InsufficientFunds] shouldBe true
+    result.swap.toOption.get.isInstanceOf[InsufficientFunds] shouldBe true
 
   it should "fail for non-active account" in:
     val acc    = Account.create(id, Amount.unsafe(BigDecimal("1000.00")), usd).copy(status = Frozen)
     val result = acc.debit(Amount.unsafe(BigDecimal("100.00")))
     result.isLeft shouldBe true
-    result.left.get.isInstanceOf[AccountNotActive] shouldBe true
+    result.swap.toOption.get.isInstanceOf[AccountNotActive] shouldBe true
 
   "Account.credit" should "increase balance for active account" in:
     val acc    = Account.create(id, Amount.unsafe(BigDecimal("1000.00")), usd)
@@ -177,6 +177,12 @@ class AccountSpec extends AnyFlatSpec with Matchers:
     val acc    = Account.create(id, Amount.unsafe(BigDecimal("1000.00")), usd).copy(status = Closed)
     val result = acc.credit(Amount.unsafe(BigDecimal("100.00")))
     result.isLeft shouldBe true
+
+  it should "fail on overflow of MaxValue" in:
+    val acc    = Account.create(id, Amount.unsafe(BigDecimal("999999999.00")), usd)
+    val result = acc.credit(Amount.unsafe(BigDecimal("2000000.00")))
+    result.isLeft shouldBe true
+    result.swap.toOption.get.isInstanceOf[ValidationError] shouldBe true
 
 // ==================== Transaction Tests ====================
 
@@ -198,19 +204,34 @@ class TransactionSpec extends AnyFlatSpec with Matchers:
     tx.version shouldBe 0L
     tx.failureReason shouldBe None
 
-  "Transaction.complete" should "transition to Completed" in:
+  "Transaction.complete" should "transition to Completed for Pending" in:
     val tx       = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now)
-    val complete = tx.complete
+    val result   = tx.complete
+    result.isRight shouldBe true
+    val complete = result.toOption.get
     complete.status shouldBe Completed
     complete.version shouldBe 1L
     complete.updatedAt should not be now
 
-  "Transaction.fail" should "transition to Failed with reason" in:
+  it should "fail for already Completed transaction" in:
+    val tx     = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now)
+    val result = tx.complete.flatMap(_ => tx.complete) // second call on completed
+    // Need a completed tx
+    val completed = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now).copy(status = Completed)
+    completed.complete.isLeft shouldBe true
+
+  "Transaction.fail" should "transition to Failed with reason for Pending" in:
     val tx    = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now)
-    val failed = tx.fail("Insufficient funds")
+    val result = tx.fail("Insufficient funds")
+    result.isRight shouldBe true
+    val failed = result.toOption.get
     failed.status shouldBe Failed
     failed.failureReason shouldBe Some("Insufficient funds")
     failed.version shouldBe 1L
+
+  it should "fail for already Completed transaction" in:
+    val completed = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now).copy(status = Completed)
+    completed.fail("reason").isLeft shouldBe true
 
   "Transaction.cancel" should "succeed for Pending transaction" in:
     val tx     = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now)
@@ -219,15 +240,15 @@ class TransactionSpec extends AnyFlatSpec with Matchers:
     result.toOption.get.status shouldBe Cancelled
     result.toOption.get.version shouldBe 1L
 
-  it should "fail for Completed transaction" in:
-    val tx     = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now).complete
-    val result = tx.cancel
+  it should "fail for Completed transaction with TransactionNotCancellable" in:
+    val completed = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now).copy(status = Completed)
+    val result = completed.cancel
     result.isLeft shouldBe true
+    result.swap.toOption.get.isInstanceOf[TransactionNotCancellable] shouldBe true
 
   it should "fail for Failed transaction" in:
-    val tx     = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now).fail("err")
-    val result = tx.cancel
-    result.isLeft shouldBe true
+    val failed = Transaction.create(txId, srcId, dstId, Amount.unsafe(BigDecimal("100.00")), Currency.USD, now).copy(status = Failed)
+    failed.cancel.isLeft shouldBe true
 
 // ==================== TransactionProcessor Tests ====================
 
@@ -258,24 +279,38 @@ class TransactionProcessorSpec extends AnyFlatSpec with Matchers:
     newSrc.version shouldBe 1L
     newDst.version shouldBe 1L
     events should have size 4
-    events.head.isInstanceOf[TransactionCreated] shouldBe true
+    events(0).isInstanceOf[TransactionCreated] shouldBe true
     events(1).isInstanceOf[TransactionCompleted] shouldBe true
     events(2).isInstanceOf[AccountBalanceUpdated] shouldBe true
     events(3).isInstanceOf[AccountBalanceUpdated] shouldBe true
+    // Check typed fields
+    val tc = events(0).asInstanceOf[TransactionCreated]
+    tc.transactionId shouldBe txId
+    tc.sourceAccountId shouldBe srcId
+    tc.destinationAccountId shouldBe dstId
+    tc.amount shouldBe amount
+    tc.currency shouldBe usd
+
+  it should "fail for non-Pending transaction" in:
+    val (src, dst) = makeAccounts()
+    val completedTx = makeTx().copy(status = Completed)
+    val result = TransactionProcessor.createAndComplete(completedTx, src, dst)
+    result.isLeft shouldBe true
+    result.swap.toOption.get.isInstanceOf[ValidationError] shouldBe true
 
   it should "fail for same source and destination" in:
     val acc  = Account.create(srcId, balance, usd)
     val tx   = Transaction.create(txId, srcId, srcId, amount, usd, Instant.now())
     val result = TransactionProcessor.createAndComplete(tx, acc, acc)
     result.isLeft shouldBe true
-    result.left.get.isInstanceOf[SameSourceAndDestination] shouldBe true
+    result.swap.toOption.get.isInstanceOf[SameSourceAndDestination] shouldBe true
 
   it should "fail for insufficient funds" in:
     val (src, dst) = makeAccounts(Amount.unsafe(BigDecimal("100.00")), balance)
     val tx         = makeTx()
     val result     = TransactionProcessor.createAndComplete(tx, src, dst)
     result.isLeft shouldBe true
-    result.left.get.isInstanceOf[InsufficientFunds] shouldBe true
+    result.swap.toOption.get.isInstanceOf[InsufficientFunds] shouldBe true
 
   it should "fail for frozen source account" in:
     val src  = Account.create(srcId, balance, usd).copy(status = Frozen)
@@ -296,25 +331,40 @@ class TransactionProcessorSpec extends AnyFlatSpec with Matchers:
     val tx         = makeTx(Amount.Zero)
     val result     = TransactionProcessor.createAndComplete(tx, src, dst)
     result.isLeft shouldBe true
+    result.swap.toOption.get.isInstanceOf[ValidationError] shouldBe true
 
   "TransactionProcessor.cancel" should "refund source account for Pending transaction" in:
     val src  = Account.create(srcId, balance, usd)
     val tx   = makeTx()
     val result = TransactionProcessor.cancel(tx, src)
     result.isRight shouldBe true
-    val (cancelledTx, refundedAcc, events) = result.toOption.get
+    val CancelResult(cancelledTx, refundedAcc, events) = result.toOption.get
     cancelledTx.status shouldBe Cancelled
     refundedAcc.balance shouldBe Amount.unsafe(BigDecimal("11500.00"))
     events should have size 2
     events.head.isInstanceOf[TransactionCancelled] shouldBe true
     events(1).isInstanceOf[AccountBalanceUpdated] shouldBe true
+    // Check typed fields
+    val abu = events(1).asInstanceOf[AccountBalanceUpdated]
+    abu.accountId shouldBe srcId
+    abu.previousBalance shouldBe balance
+    abu.newBalance shouldBe Amount.unsafe(BigDecimal("11500.00"))
+    abu.difference shouldBe amount.value
+
+  it should "fail for wrong source account" in:
+    val src  = Account.create(srcId, balance, usd)
+    val otherAcc = Account.create(AccountId.generate, balance, usd)
+    val tx   = makeTx()
+    val result = TransactionProcessor.cancel(tx, otherAcc)
+    result.isLeft shouldBe true
+    result.swap.toOption.get.isInstanceOf[ValidationError] shouldBe true
 
   it should "fail for Completed transaction" in:
     val src  = Account.create(srcId, balance, usd)
-    val tx   = makeTx().complete
+    val tx   = makeTx().copy(status = Completed)
     val result = TransactionProcessor.cancel(tx, src)
     result.isLeft shouldBe true
-    result.left.get.isInstanceOf[ValidationError] shouldBe true
+    result.swap.toOption.get.isInstanceOf[TransactionNotCancellable] shouldBe true
 
 // ==================== DomainError Tests ====================
 
@@ -332,3 +382,7 @@ class DomainErrorSpec extends AnyFlatSpec with Matchers:
     ValidationError("custom error").message shouldBe "custom error"
 
     SameSourceAndDestination(accountId).message should include(accountId.asString)
+
+    val txId = TransactionId.generate
+    TransactionNotCancellable(txId, Completed).message should include(txId.asString)
+    TransactionNotCancellable(txId, Completed).message should include("Completed")

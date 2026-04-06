@@ -1,6 +1,6 @@
 package tpp.domain.model
 
-import tpp.domain.error.{AccountNotActive, DomainError, InsufficientFunds}
+import tpp.domain.error.{AccountNotActive, DomainError, InsufficientFunds, ValidationError}
 
 /** Статус счёта. */
 enum AccountStatus:
@@ -30,6 +30,8 @@ case class Account(
   def credit(amount: Amount): Either[DomainError, Account] =
     if status != AccountStatus.Active then
       Left(AccountNotActive(id, status))
+    else if balance.value + amount.value > Amount.MaxValue then
+      Left(ValidationError(s"Credit would exceed max balance for account $id"))
     else
       Right(copy(balance = balance + amount, version = version + 1))
 

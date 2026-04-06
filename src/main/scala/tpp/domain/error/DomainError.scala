@@ -25,6 +25,10 @@ case class InsufficientFunds(id: AccountId, available: Amount, required: Amount)
 case class TransactionNotFound(id: TransactionId) extends DomainError:
   val message = s"Transaction not found: $id"
 
+/** Невозможно отменить транзакцию (не в статусе Pending). */
+case class TransactionNotCancellable(id: TransactionId, status: tpp.domain.model.TransactionStatus) extends DomainError:
+  val message = s"Cannot cancel transaction $id in status $status"
+
 /** Некорректная транзакция (счёт отправителя и получателя совпадают). */
 case class SameSourceAndDestination(id: AccountId) extends DomainError:
   val message = s"Source and destination accounts must differ, got: $id"

@@ -1,5 +1,7 @@
 package tpp.domain.model
 
+import tpp.domain.error.{DomainError, TransactionNotCancellable}
+
 import java.time.Instant
 
 /** Статус транзакции. */
@@ -22,18 +24,29 @@ case class Transaction(
     version: Long = 0L,
     failureReason: Option[String] = None
 ):
-  def complete: Transaction =
-    copy(status = TransactionStatus.Completed, updatedAt = Instant.now(), version = version + 1)
+  /** Завершить транзакцию. Только из Pending. */
+  def complete: Either[String, Transaction] =
+    status match
+      case TransactionStatus.Pending =>
+        Right(copy(status = TransactionStatus.Completed, updatedAt = Instant.now(), version = version + 1))
+      case _ =>
+        Left(s"Cannot complete transaction in status $status")
 
-  def fail(reason: String): Transaction =
-    copy(status = TransactionStatus.Failed, updatedAt = Instant.now(), version = version + 1, failureReason = Some(reason))
+  /** Завершить с ошибкой. Только из Pending. */
+  def fail(reason: String): Either[String, Transaction] =
+    status match
+      case TransactionStatus.Pending =>
+        Right(copy(status = TransactionStatus.Failed, updatedAt = Instant.now(), version = version + 1, failureReason = Some(reason)))
+      case _ =>
+        Left(s"Cannot fail transaction in status $status")
 
-  def cancel: Either[String, Transaction] =
+  /** Отменить транзакцию. Только из Pending. */
+  def cancel: Either[DomainError, Transaction] =
     status match
       case TransactionStatus.Pending =>
         Right(copy(status = TransactionStatus.Cancelled, updatedAt = Instant.now(), version = version + 1))
       case _ =>
-        Left(s"Cannot cancel transaction in status $status")
+        Left(TransactionNotCancellable(id, status))
 
 object Transaction:
   def create(

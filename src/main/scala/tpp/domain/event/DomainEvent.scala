@@ -1,5 +1,7 @@
 package tpp.domain.event
 
+import tpp.domain.model.{AccountId, Amount, Currency, TransactionId}
+
 import java.time.Instant
 
 /** Базовый тип для всех доменных событий.
@@ -12,29 +14,29 @@ sealed trait DomainEvent:
 
 /** Транзакция создана (Pending). */
 case class TransactionCreated(
-    transactionId: String,
-    sourceAccountId: String,
-    destinationAccountId: String,
-    amount: BigDecimal,
-    currency: String,
+    transactionId: TransactionId,
+    sourceAccountId: AccountId,
+    destinationAccountId: AccountId,
+    amount: Amount,
+    currency: Currency,
     occurredAt: Instant
 ) extends DomainEvent:
   val eventType = "TransactionCreated"
 
 /** Транзакция завершена. */
 case class TransactionCompleted(
-    transactionId: String,
-    sourceAccountId: String,
-    destinationAccountId: String,
-    amount: BigDecimal,
-    currency: String,
+    transactionId: TransactionId,
+    sourceAccountId: AccountId,
+    destinationAccountId: AccountId,
+    amount: Amount,
+    currency: Currency,
     occurredAt: Instant
 ) extends DomainEvent:
   val eventType = "TransactionCompleted"
 
 /** Транзакция завершена с ошибкой. */
 case class TransactionFailed(
-    transactionId: String,
+    transactionId: TransactionId,
     reason: String,
     occurredAt: Instant
 ) extends DomainEvent:
@@ -42,16 +44,16 @@ case class TransactionFailed(
 
 /** Транзакция отменена. */
 case class TransactionCancelled(
-    transactionId: String,
+    transactionId: TransactionId,
     occurredAt: Instant
 ) extends DomainEvent:
   val eventType = "TransactionCancelled"
 
 /** Баланс счёта обновлён. */
 case class AccountBalanceUpdated(
-    accountId: String,
-    previousBalance: BigDecimal,
-    newBalance: BigDecimal,
+    accountId: AccountId,
+    previousBalance: Amount,
+    newBalance: Amount,
     difference: BigDecimal,
     occurredAt: Instant
 ) extends DomainEvent:
