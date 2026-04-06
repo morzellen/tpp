@@ -65,7 +65,10 @@ lazy val root = (project in file("."))
     ),
 
     // Test settings
-    testFrameworks += new TestFramework("org.scalatest.tools.Framework"),
+    testFrameworks ++= Seq(
+      new TestFramework("org.scalatest.tools.Framework"),
+      new TestFramework("zio.test.sbt.ZTestFramework")
+    ),
 
     // Fork tests for isolation
     Test / fork := true

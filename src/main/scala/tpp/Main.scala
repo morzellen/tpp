@@ -19,5 +19,7 @@ object Main extends ZIOAppDefault:
       _ <- ZIO.logInfo("=== TPP (Transaction Processing Platform) ===")
       _ <- ZIO.logInfo("Фаза 0: Подготовка и Настройка")
       _ <- ZIO.logInfo("Приложение запущено и готово к работе")
-      _ <- ZIO.never // Бесконечное ожидание (сервер будет добавлен в Фазе 4)
+      // TODO Фаза 4: заменить ZIO.never на binding HTTP-сервера
+      // или на Promise-based graceful shutdown signal
+      _ <- ZIO.never
     yield ()
