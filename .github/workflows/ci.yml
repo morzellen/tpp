@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  SBT_VERSION: 1.12.8
+  JAVA_VERSION: 17
+
+jobs:
+  # ====================================
+  # Compile & Test
+  # ====================================
+  build-and-test:
+    name: Build & Test (JDK ${{ matrix.java }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        java: [17, 21]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Cache sbt dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ivy2/cache
+            ~/.sbt
+            ~/.cache/coursier
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt') }}
+          restore-keys: |
+            ${{ runner.os }}-sbt-
+
+      - name: Compile
+        run: sbt compile
+
+      - name: Run tests
+        run: sbt test
+
+      - name: Check formatting
+        run: sbt scalafmtCheckAll
+
+  # ====================================
+  # Linting & Formatting
+  # ====================================
+  lint:
+    name: Lint & Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Check formatting (scalafmt)
+        run: sbt scalafmtCheckAll
+
+  # ====================================
+  # Documentation Check
+  # ====================================
+  docs-check:
+    name: Documentation Links Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check markdown files exist
+        run: |
+          test -f README.md || { echo "README.md not found"; exit 1; }
+          test -f docs/SPEC.md || echo "WARNING: docs/SPEC.md not found"
+          test -f docs/ARCHITECTURE.md || echo "WARNING: docs/ARCHITECTURE.md not found"
+          test -f docs/ROADMAP.md || echo "WARNING: docs/ROADMAP.md not found"
