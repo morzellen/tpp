@@ -1,0 +1,30 @@
+fix(code-review): address all code review findings from Phase 0
+
+1. Fix docker-compose.yml volume mount path (Critical)
+   - Changed ./docker/postgres/init.sql to ./postgres/init.sql
+   - CI runs "cd docker && docker compose up", so path was resolving incorrectly
+
+2. Remove duplicate V1__initial_schema.sql (Suggestion)
+   - Schema was duplicated in init.sql and migrations file
+   - No migration runner configured, so V1 file was dead code
+   - init.sql remains as the single source of truth for dev
+
+3. Add Kafka dual-listener config (Suggestion)
+   - Added PLAINTEXT_INTERNAL listener on port 29092
+   - Allows future containerized app to connect via kafka:29092
+   - localhost:9092 still works for host connections
+
+4. Add env var override for DB password (Suggestion)
+   - Changed password = "tpp_password" to password = ${?TPP_DB_PASSWORD}
+   - Allows environment-specific overrides without file changes
+
+5. Register ZIO Test framework in build.sbt (Suggestion)
+   - Added ZTestFramework to testFrameworks
+   - zio-test dependencies were present but specs wouldn't run
+
+6. Add graceful shutdown TODO in Main.scala (Nice to have)
+   - Documented that ZIO.never should be replaced with HTTP server binding
+   - or Promise-based shutdown signal in Phase 4
+
+7. Remove deprecated version from docker-compose.yml (Nice to have)
+   - version: '3.8' is ignored by Compose V2 and produces warnings
